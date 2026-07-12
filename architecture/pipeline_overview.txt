@@ -1,0 +1,67 @@
+Healthcare Operational Capacity & Throughput Pipeline
+======================================================
+
+                         CMS Hospital IQR Dataset
+                                   |
+                                   v
+                    Local Landing Zone (data/raw/)
+                                   |
+                                   v
+          PySpark Ingestion Pipeline (ingest_raw_cms_data.py)
+                 - filter Condition == Emergency Department
+                 - split into hospital reference + ED measure extracts
+                 - validate row counts and key nulls
+                                   |
+                                   v
+        Landing extracts: cms_hospital_reference.csv
+                          cms_ed_throughput_extract.csv
+                                   |
+                                   v
+        PySpark Standardization Pipeline (standardize_ed_data.py)
+                 - standardize types (dates, numeric scores)
+                 - clean text fields, pad ZIP codes, fill nulls
+                 - deduplicate to one row per grain
+                 - data-quality validation only (nulls, duplicate keys)
+                 - NO dimensions, NO facts, NO surrogate keys
+                                   |
+                                   v
+      Standardized extracts (data/curated/): hospital_standardized.csv
+                                              ed_throughput_standardized.csv
+                                   |
+                                   v
+                    Snowflake RAW schema (landing tables)
+                                   |
+                                   v
+                          dbt Staging models
+                stg_hospital, stg_ed_throughput (thin renames only)
+                                   |
+                                   v
+                          dbt Mart models
+        dim_hospital, dim_measure, dim_date, fct_ed_throughput
+       (surrogate keys, measure categories, referential integrity tests
+        are all built and enforced here, in dbt -- not in PySpark)
+                                   |
+                                   v
+                mart_ed_control_tower (Snowflake STAR schema)
+                                   |
+                                   v
+              Power BI Executive Control Tower Dashboard
+        Median ED Arrival-to-Departure | Transfer Delay | LWBS Rate
+             Psychiatric ED Delay | Hospital & State Rankings
+
+------------------------------------------------------------------------
+Tool boundaries (each layer owned by exactly one tool):
+
+  PySpark    -> ingestion + data-quality standardization only
+  Snowflake  -> storage (RAW landing tables) + compute for dbt
+  dbt        -> all dimensional modeling (star schema), business logic
+                (rankings, categorization), and testing
+  Power BI   -> presentation only, connects to mart_ed_control_tower alone
+
+------------------------------------------------------------------------
+Local vs. AWS: pipelines/config.py resolves data/raw and data/curated to
+either local paths or s3a:// URIs based on the CMS_STORAGE_MODE
+environment variable -- switching environments is a one-setting change,
+not a code change. In Phase 5, Snowflake's internal named stage becomes
+an external stage backed by a storage integration pointed at the S3
+curated prefix. Nothing in dbt or Power BI changes.
